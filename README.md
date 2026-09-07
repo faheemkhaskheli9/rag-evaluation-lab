@@ -4,7 +4,7 @@
 > This is an original, from-scratch build. It is not affiliated with, and does not
 > contain any code, prompts, data, or business logic from, any employer or client.
 
-![status](https://img.shields.io/badge/status-planned-lightgrey)
+![status](https://img.shields.io/badge/status-phase%201%20in%20progress-yellow)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
@@ -54,6 +54,23 @@ gh issue list --repo faheemkhaskheli9/rag-evaluation-lab --state open --label ty
 ```
 
 Implement Phase 1 issues first (later phases depend on it). When you start one, add label `status:in-progress`. When you finish, close it referencing the commit (e.g. `git commit -m "... Closes #4"`) and push.
+
+## Phase 1 quickstart
+
+```bash
+pip install -r requirements.txt
+
+# HTTP API
+PYTHONPATH=src uvicorn ragel.api:app --reload
+curl -s -F 'file=@examples/sample.txt' localhost:8000/documents
+
+# CLI
+PYTHONPATH=src python -m ragel.cli ingest examples/sample.txt
+PYTHONPATH=src python -m ragel.cli list
+```
+
+VS Code: **RAGEL: FastAPI (uvicorn)**, **RAGEL: CLI (ingest)**, **RAGEL: pytest**
+in `.vscode/launch.json`.
 
 ## 6. Repository Structure
 
