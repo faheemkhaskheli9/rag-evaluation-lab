@@ -121,3 +121,13 @@ def list_document_qa_pairs(
     document_id: str, qa_store: QAStore = Depends(get_qa_store)
 ) -> list[QAPairOut]:
     return [QAPairOut(**p.__dict__) for p in qa_store.get_pairs(document_id)]
+
+
+@app.get("/qa-pairs/{pair_id}", response_model=QAPairOut)
+def get_qa_pair(pair_id: str, qa_store: QAStore = Depends(get_qa_store)) -> QAPairOut:
+    """Traceability lookup (issue #3): the originating passage for any
+    given Q/A pair, without the caller already knowing its document id."""
+    pair = qa_store.get_pair(pair_id)
+    if pair is None:
+        raise HTTPException(status_code=404, detail="Q/A pair not found")
+    return QAPairOut(**pair.__dict__)

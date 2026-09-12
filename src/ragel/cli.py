@@ -36,8 +36,21 @@ def main(argv: list[str] | None = None) -> int:
     gen.add_argument("document_id")
     gen.add_argument("--max-pairs", type=int, default=None)
 
+    find = sub.add_parser("find-qa", help="look up a Q/A pair's originating passage by pair id")
+    find.add_argument("pair_id")
+
     args = parser.parse_args(argv)
     store = _store(args.config)
+
+    if args.command == "find-qa":
+        pair = _qa_store(args.config).get_pair(args.pair_id)
+        if pair is None:
+            print(f"error: no Q/A pair {args.pair_id!r}", file=sys.stderr)
+            return 1
+        print(f"document: {pair.document_id}  chunk: {pair.chunk_index}")
+        print(f"passage:\n{pair.source_passage}\n")
+        print(f"Q: {pair.question}\nA: {pair.answer}")
+        return 0
 
     if args.command == "gen-qa":
         text = store.read_text(args.document_id)

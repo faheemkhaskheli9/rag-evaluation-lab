@@ -1,3 +1,5 @@
+import json
+
 from ragel.qa_generation import (
     MockQAGenerator,
     QAStore,
@@ -105,3 +107,58 @@ def test_get_pairs_on_poisoned_file_returns_empty_not_a_crash(tmp_path):
     (qa_dir / "doc1.json").write_text("{not valid json", encoding="utf-8")
     store = QAStore(store_dir)
     assert store.get_pairs("doc1") == []
+
+
+# --- Traceability: Q/A pair -> source chunk (issue #3) -------------------
+
+
+def test_to_retrieval_reference_carries_traceability_fields():
+    pair = generate_qa_pairs("doc1", SAMPLE_TEXT)[0]
+    ref = pair.to_retrieval_reference()
+
+    assert ref["document_id"] == "doc1"
+    assert ref["chunk_index"] == pair.chunk_index
+    assert ref["source_passage"] == pair.source_passage
+    assert ref["expected_answer"] == pair.answer
+
+
+def test_get_pair_looks_up_by_id_alone(tmp_path):
+    store = QAStore(tmp_path / "corpus")
+    pairs = generate_qa_pairs("doc1", SAMPLE_TEXT)
+    store.upsert_pairs("doc1", pairs)
+
+    found = store.get_pair(pairs[0].pair_id)
+    assert found == pairs[0]
+
+
+def test_get_pair_unknown_id_returns_none(tmp_path):
+    store = QAStore(tmp_path / "corpus")
+    assert store.get_pair("does-not-exist") is None
+
+
+def test_get_pair_falls_back_to_scan_when_index_is_stale(tmp_path):
+    store = QAStore(tmp_path / "corpus")
+    pairs = generate_qa_pairs("doc1", SAMPLE_TEXT)
+    store.upsert_pairs("doc1", pairs)
+
+    # Corrupt the index on purpose: it now points the pair at a document
+    # that doesn't have it. A stale index must degrade to a full scan, not
+    # report "not found" for a pair that actually exists.
+    index_path = store._index_path()
+    index_path.write_text(
+        json.dumps({pairs[0].pair_id: "some-other-doc"}), encoding="utf-8"
+    )
+
+    found = store.get_pair(pairs[0].pair_id)
+    assert found == pairs[0]
+
+
+def test_get_pair_works_across_multiple_documents(tmp_path):
+    store = QAStore(tmp_path / "corpus")
+    pairs_a = generate_qa_pairs("doc-a", SAMPLE_TEXT)
+    pairs_b = generate_qa_pairs("doc-b", "Different text entirely. Second sentence here.")
+    store.upsert_pairs("doc-a", pairs_a)
+    store.upsert_pairs("doc-b", pairs_b)
+
+    assert store.get_pair(pairs_a[0].pair_id).document_id == "doc-a"
+    assert store.get_pair(pairs_b[0].pair_id).document_id == "doc-b"

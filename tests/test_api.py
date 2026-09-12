@@ -87,3 +87,22 @@ def test_generate_qa_pairs_respects_max_pairs(client, text_bytes):
 
 def test_generate_qa_pairs_missing_document_404(client):
     assert client.post("/documents/nope/qa-pairs").status_code == 404
+
+
+def test_get_qa_pair_by_id_traces_back_to_source_passage(client, text_bytes):
+    doc_id = client.post(
+        "/documents", files={"file": ("notes.txt", text_bytes, "text/plain")}
+    ).json()["document_id"]
+    pairs = client.post(f"/documents/{doc_id}/qa-pairs").json()
+    pair_id = pairs[0]["pair_id"]
+
+    resp = client.get(f"/qa-pairs/{pair_id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["pair_id"] == pair_id
+    assert body["document_id"] == doc_id
+    assert body["source_passage"] == pairs[0]["source_passage"]
+
+
+def test_get_qa_pair_missing_404(client):
+    assert client.get("/qa-pairs/does-not-exist").status_code == 404

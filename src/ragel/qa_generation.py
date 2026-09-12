@@ -96,6 +96,19 @@ class QAPair:
     answer: str
     generated_at: str
 
+    def to_retrieval_reference(self) -> dict:
+        """The subset of fields Phase 3's retrieval-metrics step needs to
+        score recall/precision against the correct source chunk — the
+        traceability data this issue adds must survive being passed
+        downstream into that step."""
+        return {
+            "pair_id": self.pair_id,
+            "document_id": self.document_id,
+            "chunk_index": self.chunk_index,
+            "source_passage": self.source_passage,
+            "expected_answer": self.answer,
+        }
+
 
 def _pair_id(document_id: str, chunk_index: int, passage: str) -> str:
     digest = hashlib.sha256(
@@ -168,6 +181,19 @@ class QAStore:
     def _path(self, document_id: str) -> Path:
         return self.qa_dir / f"{document_id}.json"
 
+    def _index_path(self) -> Path:
+        return self.qa_dir / "_pair_index.json"
+
+    def _load_index(self) -> dict[str, str]:
+        path = self._index_path()
+        if not path.is_file():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+        return data if isinstance(data, dict) else {}
+
     def get_pairs(self, document_id: str) -> list[QAPair]:
         path = self._path(document_id)
         if not path.is_file():
@@ -191,4 +217,36 @@ class QAStore:
             self._path(document_id),
             json.dumps([asdict(p) for p in merged], indent=2, sort_keys=True).encode("utf-8"),
         )
+
+        index = self._load_index()
+        for pair in merged:
+            index[pair.pair_id] = document_id
+        _atomic_write(
+            self._index_path(),
+            json.dumps(index, indent=2, sort_keys=True).encode("utf-8"),
+        )
         return merged
+
+    def get_pair(self, pair_id: str) -> QAPair | None:
+        """Look up a single Q/A pair by id alone (issue #3: a lookup for
+        the originating passage of any given Q/A pair, without the caller
+        already knowing which document it came from)."""
+        index = self._load_index()
+        document_id = index.get(pair_id)
+        if document_id is not None:
+            for pair in self.get_pairs(document_id):
+                if pair.pair_id == pair_id:
+                    return pair
+
+        # Index miss (or stale) — fall back to scanning every document's
+        # pairs rather than reporting "not found" for a pair that actually
+        # exists; a stale/missing index must degrade, not poison lookups.
+        if not self.qa_dir.is_dir():
+            return None
+        for path in self.qa_dir.glob("*.json"):
+            if path.name == self._index_path().name:
+                continue
+            for pair in self.get_pairs(path.stem):
+                if pair.pair_id == pair_id:
+                    return pair
+        return None
