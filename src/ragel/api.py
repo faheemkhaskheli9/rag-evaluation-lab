@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from .config import Settings, load_settings
 from .ingest import CorruptDocumentError, IngestStore, UnsupportedTypeError
+from .qa_generation import QAPair, QAStore, generate_qa_pairs
 
 app = FastAPI(title="RAG Evaluation Lab", version="0.1.0")
 
@@ -21,6 +22,10 @@ def _settings() -> Settings:
 
 def get_store(settings: Settings = Depends(_settings)) -> IngestStore:
     return IngestStore(settings.storage_dir, settings.max_upload_bytes)
+
+
+def get_qa_store(settings: Settings = Depends(_settings)) -> QAStore:
+    return QAStore(settings.storage_dir)
 
 
 class DocumentOut(BaseModel):
@@ -79,3 +84,40 @@ def get_document_text(
     if text is None:
         raise HTTPException(status_code=404, detail="document not found")
     return text
+
+
+class QAPairOut(BaseModel):
+    pair_id: str
+    document_id: str
+    chunk_index: int
+    source_passage: str
+    question: str
+    answer: str
+    generated_at: str
+
+
+class GenerateQARequest(BaseModel):
+    max_pairs: int | None = None
+
+
+@app.post("/documents/{document_id}/qa-pairs", response_model=list[QAPairOut])
+def generate_document_qa_pairs(
+    document_id: str,
+    request: GenerateQARequest | None = None,
+    store: IngestStore = Depends(get_store),
+    qa_store: QAStore = Depends(get_qa_store),
+) -> list[QAPairOut]:
+    text = store.read_text(document_id)
+    if text is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    max_pairs = request.max_pairs if request is not None else None
+    pairs: list[QAPair] = generate_qa_pairs(document_id, text, max_pairs=max_pairs)
+    merged = qa_store.upsert_pairs(document_id, pairs)
+    return [QAPairOut(**p.__dict__) for p in merged]
+
+
+@app.get("/documents/{document_id}/qa-pairs", response_model=list[QAPairOut])
+def list_document_qa_pairs(
+    document_id: str, qa_store: QAStore = Depends(get_qa_store)
+) -> list[QAPairOut]:
+    return [QAPairOut(**p.__dict__) for p in qa_store.get_pairs(document_id)]

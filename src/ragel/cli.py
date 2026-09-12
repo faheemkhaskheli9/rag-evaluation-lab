@@ -8,11 +8,17 @@ from pathlib import Path
 
 from .config import load_settings
 from .ingest import CorruptDocumentError, IngestStore, UnsupportedTypeError
+from .qa_generation import QAStore, generate_qa_pairs
 
 
 def _store(config_path: str | None) -> IngestStore:
     settings = load_settings(config_path)
     return IngestStore(settings.storage_dir, settings.max_upload_bytes)
+
+
+def _qa_store(config_path: str | None) -> QAStore:
+    settings = load_settings(config_path)
+    return QAStore(settings.storage_dir)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,8 +32,24 @@ def main(argv: list[str] | None = None) -> int:
     txt = sub.add_parser("text", help="print extracted text for a document id")
     txt.add_argument("document_id")
 
+    gen = sub.add_parser("gen-qa", help="generate Q/A ground-truth pairs for a document")
+    gen.add_argument("document_id")
+    gen.add_argument("--max-pairs", type=int, default=None)
+
     args = parser.parse_args(argv)
     store = _store(args.config)
+
+    if args.command == "gen-qa":
+        text = store.read_text(args.document_id)
+        if text is None:
+            print(f"error: no document {args.document_id!r}", file=sys.stderr)
+            return 1
+        pairs = generate_qa_pairs(args.document_id, text, max_pairs=args.max_pairs)
+        merged = _qa_store(args.config).upsert_pairs(args.document_id, pairs)
+        for p in merged:
+            print(f"[{p.chunk_index}] Q: {p.question}\n    A: {p.answer}")
+        print(f"{len(merged)} Q/A pair(s) for {args.document_id}", file=sys.stderr)
+        return 0
 
     if args.command == "list":
         for r in store.list_documents():

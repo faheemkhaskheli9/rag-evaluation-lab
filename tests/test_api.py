@@ -1,14 +1,16 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from ragel.api import app, get_store
+from ragel.api import app, get_qa_store, get_store
 from ragel.ingest import IngestStore
+from ragel.qa_generation import QAStore
 
 
 @pytest.fixture
 def client(tmp_path):
     store = IngestStore(tmp_path / "corpus", max_upload_bytes=5_000_000)
     app.dependency_overrides[get_store] = lambda: store
+    app.dependency_overrides[get_qa_store] = lambda: QAStore(tmp_path / "corpus")
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -48,3 +50,40 @@ def test_corrupt_pdf_422(client):
 def test_missing_document_404(client):
     assert client.get("/documents/nope").status_code == 404
     assert client.get("/documents/nope/text").status_code == 404
+
+
+def test_generate_and_list_qa_pairs(client, text_bytes):
+    doc_id = client.post(
+        "/documents", files={"file": ("notes.txt", text_bytes, "text/plain")}
+    ).json()["document_id"]
+
+    generated = client.post(f"/documents/{doc_id}/qa-pairs")
+    assert generated.status_code == 200
+    pairs = generated.json()
+    assert len(pairs) >= 1
+    assert all(p["document_id"] == doc_id for p in pairs)
+
+    listed = client.get(f"/documents/{doc_id}/qa-pairs").json()
+    assert {p["pair_id"] for p in listed} == {p["pair_id"] for p in pairs}
+
+
+def test_generate_qa_pairs_rerun_is_idempotent(client, text_bytes):
+    doc_id = client.post(
+        "/documents", files={"file": ("notes.txt", text_bytes, "text/plain")}
+    ).json()["document_id"]
+
+    first = client.post(f"/documents/{doc_id}/qa-pairs").json()
+    second = client.post(f"/documents/{doc_id}/qa-pairs").json()
+    assert {p["pair_id"] for p in first} == {p["pair_id"] for p in second}
+
+
+def test_generate_qa_pairs_respects_max_pairs(client, text_bytes):
+    doc_id = client.post(
+        "/documents", files={"file": ("notes.txt", text_bytes, "text/plain")}
+    ).json()["document_id"]
+    resp = client.post(f"/documents/{doc_id}/qa-pairs", json={"max_pairs": 1})
+    assert len(resp.json()) <= 1
+
+
+def test_generate_qa_pairs_missing_document_404(client):
+    assert client.post("/documents/nope/qa-pairs").status_code == 404
